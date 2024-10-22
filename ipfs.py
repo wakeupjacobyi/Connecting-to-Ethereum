@@ -1,7 +1,7 @@
 import requests
 import json
 
-INFURA_URL = "https://ipfs.infura.io:5001/api/v0"
+INFURA_URL = "https://<9f6ee70719cd48b793e039c59df743cb>@ipfs.infura.io:5001/api/v0/"
 
 
 def pin_to_ipfs(data):
