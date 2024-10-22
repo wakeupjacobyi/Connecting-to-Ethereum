@@ -1,52 +1,63 @@
 import requests
 import json
 
-# Base URL for Infura IPFS API
-INFURA_URL = "https://ipfs.infura.io:5001/api/v0"
+# Pinata credentials
+PINATA_API_KEY = "3607ed6d2305ff077710"
+PINATA_SECRET_KEY = "eb60f6983a453fcbdd12494a8c8950ac207e679d2ec85a04784f5ac72b0c394f"
 
-INFURA_PROJECT_ID = "9f6ee70719cd48b793e039c59df743cb"
-INFURA_PROJECT_SECRET = "pl9fpwhZ7NjsqGtVl6qZZ09fPlYoyNyuZQhXgdw2obms1pINNM5tyg"
-
-# Create basic auth header from project ID and secret
-AUTH = (INFURA_PROJECT_ID, INFURA_PROJECT_SECRET)
+# Base URLs
+PINATA_API_URL = "https://api.pinata.cloud"
+PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs"
 
 
 def pin_to_ipfs(data):
-	assert isinstance(data, dict), f"Error pin_to_ipfs expects a dictionary"
+    assert isinstance(data, dict), f"Error pin_to_ipfs expects a dictionary"
 
-	# Convert the Python dictionary to JSON
-	json_data = json.dumps(data)
+    # Convert the Python dictionary to JSON
+    json_data = json.dumps(data)
 
-	# Prepare the payload for the request
-	files = {'file': ('data.json', json_data)}
+    # Set up the headers with API key authentication
+    headers = {
+        'pinata_api_key': PINATA_API_KEY,
+        'pinata_secret_api_key': PINATA_SECRET_KEY
+    }
 
-	# Send the POST request to Infura's IPFS API with authentication
-	response = requests.post(
-		f"{INFURA_URL}/add",
-		files=files,
-		auth=AUTH
-	)
+    # Prepare the files for upload
+    files = {
+        'file': ('data.json', json_data, 'application/json')
+    }
 
-	if response.status_code == 200:
-		# Extract and return the CID from the response
-		return response.json()['Hash']
-	else:
-		raise Exception("Error pinning to IPFS: " + response.text)
+    # Send the POST request to Pinata's pinning endpoint
+    response = requests.post(
+        f"{PINATA_API_URL}/pinning/pinFileToIPFS",
+        files=files,
+        headers=headers
+    )
+
+    if response.status_code == 200:
+        # Extract and return the CID (IpfsHash) from the response
+        return response.json()['IpfsHash']
+    else:
+        raise Exception(f"Error pinning to IPFS: {response.text}")
 
 
-def get_from_ipfs(cid):
-	assert isinstance(cid, str), f"get_from_ipfs accepts a cid in the form " \
-								f"of a string"
-	# Send POST request to Infura's IPFS cat endpoint
-	response = requests.post(f"{INFURA_URL}/cat?arg={cid}")
+def get_from_ipfs(cid, content_type="json"):
+    assert isinstance(cid,
+                      str), f"get_from_ipfs accepts a cid in the form of a string"
 
-	if response.status_code != 200:
-		raise Exception(f"Error fetching from IPFS: {response.text}")
+    # Construct the gateway URL
+    url = f"{PINATA_GATEWAY}/{cid}"
 
-	try:
-		# Parse the JSON response
-		data = json.loads(response.text)
-		assert isinstance(data, dict), f"get_from_ipfs should return a dict"
-		return data
-	except json.JSONDecodeError:
-		raise Exception("Error: Retrieved content is not valid JSON")
+    # Send GET request to Pinata gateway
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        raise Exception(f"Error fetching from IPFS: {response.text}")
+
+    try:
+        # Parse the JSON response
+        data = json.loads(response.text)
+        assert isinstance(data, dict), f"get_from_ipfs should return a dict"
+        return data
+    except json.JSONDecodeError:
+        raise Exception("Error: Retrieved content is not valid JSON")
