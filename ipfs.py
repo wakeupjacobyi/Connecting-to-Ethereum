@@ -1,5 +1,6 @@
 import requests
 import json
+import time
 
 # Pinata credentials
 PINATA_API_KEY = "3607ed6d2305ff077710"
@@ -7,7 +8,14 @@ PINATA_SECRET_KEY = "eb60f6983a453fcbdd12494a8c8950ac207e679d2ec85a04784f5ac72b0
 
 # Base URLs
 PINATA_API_URL = "https://api.pinata.cloud"
-PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs"
+
+# List of IPFS gateways to try
+GATEWAYS = [
+    "https://gateway.pinata.cloud/ipfs",
+    "https://ipfs.io/ipfs",
+    "https://cloudflare-ipfs.com/ipfs",
+    "https://gateway.moralisipfs.com/ipfs"
+]
 
 
 def pin_to_ipfs(data):
@@ -35,7 +43,6 @@ def pin_to_ipfs(data):
     )
 
     if response.status_code == 200:
-        # Extract and return the CID (IpfsHash) from the response
         return response.json()['IpfsHash']
     else:
         raise Exception(f"Error pinning to IPFS: {response.text}")
@@ -45,19 +52,35 @@ def get_from_ipfs(cid, content_type="json"):
     assert isinstance(cid,
                       str), f"get_from_ipfs accepts a cid in the form of a string"
 
-    # Construct the gateway URL
-    url = f"{PINATA_GATEWAY}/{cid}"
+    # Try multiple times with increasing delays
+    max_retries = 3
+    delays = [1, 2, 4]  # Exponential backoff
 
-    # Send GET request to Pinata gateway
-    response = requests.get(url)
+    last_exception = None
 
-    if response.status_code != 200:
-        raise Exception(f"Error fetching from IPFS: {response.text}")
+    # Try each gateway
+    for gateway in GATEWAYS:
+        # Try multiple times with delays
+        for retry in range(max_retries):
+            try:
+                url = f"{gateway}/{cid}"
+                response = requests.get(url, timeout=10)
 
-    try:
-        # Parse the JSON response
-        data = json.loads(response.text)
-        assert isinstance(data, dict), f"get_from_ipfs should return a dict"
-        return data
-    except json.JSONDecodeError:
-        raise Exception("Error: Retrieved content is not valid JSON")
+                if response.status_code == 200:
+                    data = json.loads(response.text)
+                    assert isinstance(data,
+                                      dict), f"get_from_ipfs should return a dict"
+                    return data
+
+            except (
+                    requests.exceptions.RequestException,
+                    json.JSONDecodeError) as e:
+                last_exception = e
+
+                # Only delay if we're going to try again
+                if retry < max_retries - 1:
+                    time.sleep(delays[retry])
+                continue
+
+    # If we get here, all attempts failed
+    raise Exception(f"Error fetching from IPFS: {str(last_exception)}")
