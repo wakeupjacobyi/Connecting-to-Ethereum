@@ -3,6 +3,7 @@ import json
 from web3 import Web3
 from web3.middleware import geth_poa_middleware
 from web3.providers.rpc import HTTPProvider
+import time
 
 
 # If you use one of the suggested infrastructure providers, the url will be of the form
@@ -71,6 +72,7 @@ def is_ordered_block(w3, block_num):
 		# Before EIP-1559, just compare gasPrice
 		for tx_hash in block['transactions']:
 			tx = w3.eth.get_transaction(tx_hash)
+			time.sleep(.2)
 			priority_fees.append(tx['gasPrice'])
 	else:
 		# Post EIP-1559 blocks
