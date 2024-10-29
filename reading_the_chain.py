@@ -11,7 +11,7 @@ from web3.providers.rpc import HTTPProvider
 # infura_url = f"https://mainnet.infura.io/v3/{infura_token}"
 
 def connect_to_eth():
-	url = "https://bsc-testnet.infura.io/v3/cbc1ac8fd9b14c9f8c3d8d527d835a4c"  # FILL THIS IN
+	url = "https://mainnet.infura.io/v3/cbc1ac8fd9b14c9f8c3d8d527d835a4c"  # FILL THIS IN
 	w3 = Web3(HTTPProvider(url))
 	assert w3.is_connected(), f"Failed to connect to provider at {url}"
 	return w3
