@@ -185,10 +185,37 @@ def send_signed_msg(proof, random_leaf):
     address, abi = get_contract_info(chain)
     w3 = connect_to(chain)
 
-    # TODO YOUR CODE HERE
-    tx_hash = 'placeholder'
+    # Create contract instance
+    contract = w3.eth.contract(address=address, abi=abi)
 
-    return tx_hash
+    # Build the transaction
+    nonce = w3.eth.get_transaction_count(acct.address)
+
+    # Prepare the transaction to call the submit function
+    # The contract expects the proof and the leaf value
+    tx = contract.functions.submit(
+        proof,  # The Merkle proof
+        random_leaf  # The leaf we're proving (in bytes32 format)
+    ).build_transaction({
+        'from': acct.address,
+        'gas': 200000,  # Adjust gas as needed
+        'gasPrice': w3.eth.gas_price,
+        'nonce': nonce,
+    })
+
+    # Sign and send the transaction
+    signed_tx = w3.eth.account.sign_transaction(tx, acct.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+
+    # Wait for transaction receipt
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    return tx_receipt.transactionHash.hex()
+
+    # # TODO YOUR CODE HERE
+    # tx_hash = 'placeholder'
+    #
+    # return tx_hash
 
 
 # Helper functions that do not need to be modified
