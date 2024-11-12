@@ -19,32 +19,50 @@ def mine_block(k, prev_hash, rand_lines):
         return b'\x00'
 
     # TODO your code to find a nonce here
-    # Combine prev_hash and rand_lines into block content
-    block_content = prev_hash
+    rand_lines_bytes = b''
     for line in rand_lines:
-        block_content += line.encode('utf-8')
+        rand_lines_bytes += line.encode('utf-8')
 
     nonce = 0
     while True:
-        # Convert nonce to bytes and append to block content
-        nonce_bytes = nonce.to_bytes((nonce.bit_length() + 7) // 8,
-                                     byteorder='big') or b'\0'
-        full_block = block_content + nonce_bytes
-
-        # Calculate block hash
-        block_hash = hashlib.sha256(full_block).digest()
-
-        # Convert last byte to binary and check trailing zeros
-        last_byte = block_hash[-1]
-        binary_str = format(last_byte, '08b')
-        trailing_zeros = len(binary_str) - len(binary_str.rstrip('0'))
-
-        if trailing_zeros >= k:
+        # Convert nonce to 4-byte big-endian representation
+        nonce_bytes = nonce.to_bytes(4, 'big')
+        # Concatenate prev_hash, rand_lines_bytes, and nonce_bytes
+        message = prev_hash + rand_lines_bytes + nonce_bytes
+        # Compute SHA256 hash
+        h = hashlib.sha256(message).hexdigest()
+        # Convert hash to binary string
+        h_bin = bin(int(h, 16))[2:].zfill(256)
+        # Check if hash has at least k trailing zeros
+        if h_bin.endswith('0' * k):
             return nonce_bytes
+        else:
+            nonce += 1
 
-        nonce += 1
-    # assert isinstance(nonce, bytes), 'nonce should be of type bytes'
-    # return nonce
+    #     # Combine prev_hash and rand_lines into block content
+    #     block_content = prev_hash
+    #     for line in rand_lines:
+    #         block_content += line.encode('utf-8')
+    #
+    #     nonce = 0
+    #     while True:
+    #         # Convert nonce to bytes and append to block content
+    #         nonce_bytes = nonce.to_bytes((nonce.bit_length() + 7) // 8,
+    #                                      byteorder='big') or b'\0'
+    #         full_block = block_content + nonce_bytes
+    #
+    #         # Calculate block hash
+    #         block_hash = hashlib.sha256(full_block).digest()
+    #
+    #         # Convert last byte to binary and check trailing zeros
+    #         last_byte = block_hash[-1]
+    #         binary_str = format(last_byte, '08b')
+    #         trailing_zeros = len(binary_str) - len(binary_str.rstrip('0'))
+    #
+    #         if trailing_zeros >= k:
+    #             return nonce_bytes
+    #
+    #         nonce += 1
 
 
 def get_random_lines(filename, quantity):
