@@ -3,6 +3,8 @@ import random
 import string
 import json
 from pathlib import Path
+
+from eth_account.messages import encode_defunct
 from web3 import Web3
 from web3.middleware import geth_poa_middleware  # Necessary for POA chains
 
@@ -151,26 +153,14 @@ def sign_challenge(challenge):
         This method is to allow the auto-grader to verify that you have
         claimed a prime
     """
-
     acct = get_account()
 
-    # Create the message object
-    message = eth_account.messages.encode_defunct(text=challenge)
+    addr = acct.address
+    eth_sk = acct.key
 
-    # Sign the message
-    signed_message = acct.sign_message(message)
+    eth_sig_obj = acct.signMessage(encode_defunct(text=challenge))
 
-    return acct.address, signed_message
-
-    # acct = get_account()
-    #
-    # addr = acct.address
-    # eth_sk = acct.key
-    #
-    # # TODO YOUR CODE HERE
-    # eth_sig_obj = 'placeholder'
-    #
-    # return addr, eth_sig_obj.signature.hex()
+    return addr, eth_sig_obj.signature.hex()
 
 
 def send_signed_msg(proof, random_leaf):
@@ -211,11 +201,6 @@ def send_signed_msg(proof, random_leaf):
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
     return tx_receipt.transactionHash.hex()
-
-    # # TODO YOUR CODE HERE
-    # tx_hash = 'placeholder'
-    #
-    # return tx_hash
 
 
 # Helper functions that do not need to be modified
