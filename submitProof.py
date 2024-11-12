@@ -4,6 +4,7 @@ import string
 import json
 from pathlib import Path
 
+from eth_account import Account
 from eth_account.messages import encode_defunct
 from web3 import Web3
 from web3.middleware import geth_poa_middleware  # Necessary for POA chains
@@ -153,12 +154,12 @@ def sign_challenge(challenge):
         This method is to allow the auto-grader to verify that you have
         claimed a prime
     """
-    acct = get_account()
+    with open('sk.txt', 'r') as f:
+        private_key = f.read().strip()
 
+    acct = Account.from_key(private_key)
     addr = acct.address
-    eth_sk = acct.key
-
-    eth_sig_obj = acct.signMessage(encode_defunct(text=challenge))
+    eth_sig_obj = acct.sign_message(encode_defunct(text=challenge))
 
     return addr, eth_sig_obj.signature.hex()
 
