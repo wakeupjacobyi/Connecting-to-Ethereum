@@ -46,10 +46,18 @@ def scanBlocks(chain,start_block,end_block,contract_address):
         print( f"end_block = {end_block}" )
         print( f"start_block = {start_block}" )
 
-    if start_block == end_block:
-        print( f"Scanning block {start_block} on {chain}" )
-    else:
-        print( f"Scanning blocks {start_block} - {end_block} on {chain}" )
+    print(f"Scanning blocks {start_block} - {end_block} on {chain}")
+
+    # Initialize DataFrame
+    try:
+        df = pd.read_csv(eventfile)
+        # Rename column if it exists
+        if 'transaction_hash' in df.columns:
+            df = df.rename(columns={'transaction_hash': 'transactionHash'})
+    except FileNotFoundError:
+        df = pd.DataFrame(
+            columns=['chain', 'block_number', 'token', 'recipient', 'amount',
+                     'transactionHash'])
 
     if end_block - start_block < 30:
         event_filter = contract.events.Deposit.create_filter(fromBlock=start_block,toBlock=end_block,argument_filters=arg_filter)
@@ -57,13 +65,6 @@ def scanBlocks(chain,start_block,end_block,contract_address):
         #print( f"Got {len(events)} entries for block {block_num}" )
         # YOUR CODE HERE
         if len(events) > 0:
-            try:
-                df = pd.read_csv(eventfile)
-            except FileNotFoundError:
-                df = pd.DataFrame(
-                    columns=['chain', 'block_number', 'token', 'recipient',
-                             'amount', 'transactionHash'])
-
             for event in events:
                 new_row = {
                     'chain': chain,
@@ -74,8 +75,6 @@ def scanBlocks(chain,start_block,end_block,contract_address):
                     'transactionHash': event.transactionHash.hex()
                 }
                 df.loc[len(df)] = new_row
-
-            df.to_csv(eventfile, index=False)
     else:
         for block_num in range(start_block,end_block+1):
             event_filter = contract.events.Deposit.create_filter(fromBlock=block_num,toBlock=block_num,argument_filters=arg_filter)
@@ -84,13 +83,6 @@ def scanBlocks(chain,start_block,end_block,contract_address):
             # YOUR CODE HERE
 
             if len(events) > 0:
-                try:
-                    df = pd.read_csv(eventfile)
-                except FileNotFoundError:
-                    df = pd.DataFrame(
-                        columns=['chain', 'block_number', 'token', 'recipient',
-                                 'amount', 'transactionHash'])
-
                 for event in events:
                     new_row = {
                         'chain': chain,
@@ -101,8 +93,6 @@ def scanBlocks(chain,start_block,end_block,contract_address):
                         'transactionHash': event.transactionHash.hex()
                     }
                     df.loc[len(df)] = new_row
-
-                df.to_csv(eventfile, index=False)
 
     df.to_csv(eventfile, index=False)
     return df
