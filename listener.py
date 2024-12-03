@@ -62,7 +62,7 @@ def scanBlocks(chain,start_block,end_block,contract_address):
             except FileNotFoundError:
                 df = pd.DataFrame(
                     columns=['chain', 'block_number', 'token', 'recipient',
-                             'amount', 'transaction_hash'])
+                             'amount', 'transactionHash'])
 
             for event in events:
                 new_row = {
@@ -71,7 +71,7 @@ def scanBlocks(chain,start_block,end_block,contract_address):
                     'token': event.args.token,
                     'recipient': event.args.recipient,
                     'amount': event.args.amount,
-                    'transaction_hash': event.transactionHash.hex()
+                    'transactionHash': event.transactionHash.hex()
                 }
                 df.loc[len(df)] = new_row
 
