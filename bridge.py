@@ -81,6 +81,10 @@ def scanBlocks(chain):
         abi=action_contract_data['abi']
     )
 
+    # Set up account for transactions
+    private_key = '0x3077c2142570543b96c1d396cb50bff8602c207d3ea090ace8ad6da01c903927'
+    account = action_w3.eth.account.from_key(private_key)
+
     # Get current block number and calculate range
     current_block = w3.eth.block_number
     from_block = current_block - 4  # Last 5 blocks including current
@@ -93,15 +97,29 @@ def scanBlocks(chain):
         )
 
         for event in deposit_events:
-            # When Deposit found, call wrap() on destination
             try:
-                action_contract.functions.wrap(
+                # Build transaction
+                nonce = action_w3.eth.get_transaction_count(account.address)
+                tx = action_contract.functions.wrap(
                     event['args']['token'],
                     event['args']['recipient'],
                     event['args']['amount']
-                ).transact()
+                ).build_transaction({
+                    'from': account.address,
+                    'gas': 200000,
+                    'gasPrice': action_w3.eth.gas_price,
+                    'nonce': nonce,
+                })
+
+                # Sign and send transaction
+                signed_tx = action_w3.eth.account.sign_transaction(tx,
+                                                                   private_key)
+                tx_hash = action_w3.eth.send_raw_transaction(
+                    signed_tx.rawTransaction)
+                receipt = action_w3.eth.wait_for_transaction_receipt(tx_hash)
                 print(
                     f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
+
             except Exception as e:
                 print(f"Failed to wrap tokens: {e}")
 
@@ -113,14 +131,28 @@ def scanBlocks(chain):
         )
 
         for event in unwrap_events:
-            # When Unwrap found, call withdraw() on source
             try:
-                action_contract.functions.withdraw(
+                # Build transaction
+                nonce = action_w3.eth.get_transaction_count(account.address)
+                tx = action_contract.functions.withdraw(
                     event['args']['underlying_token'],
                     event['args']['to'],
                     event['args']['amount']
-                ).transact()
+                ).build_transaction({
+                    'from': account.address,
+                    'gas': 200000,
+                    'gasPrice': action_w3.eth.gas_price,
+                    'nonce': nonce,
+                })
+
+                # Sign and send transaction
+                signed_tx = action_w3.eth.account.sign_transaction(tx,
+                                                                   private_key)
+                tx_hash = action_w3.eth.send_raw_transaction(
+                    signed_tx.rawTransaction)
+                receipt = action_w3.eth.wait_for_transaction_receipt(tx_hash)
                 print(
                     f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+
             except Exception as e:
                 print(f"Failed to withdraw tokens: {e}")
