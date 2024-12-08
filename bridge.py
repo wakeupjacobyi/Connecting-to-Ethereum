@@ -64,23 +64,20 @@ def scanBlocks(chain):
         contract_data = getContractInfo('source')
         watching_chain = 'source'
         action_chain = 'destination'
-        retry_delay = 1  # shorter delay for AVAX
-        max_retries = 3
+        block_range = 4  # scan last 5 blocks
     else:
         w3 = connectTo('bsc')
         contract_data = getContractInfo('destination')
         watching_chain = 'destination'
         action_chain = 'source'
-        retry_delay = 3  # longer delay for BSC
-        max_retries = 5
+        block_range = 1  # scan fewer blocks for BSC to avoid rate limits
 
-    # Create contract instance for the chain we're watching
+    # Create contract instances
     watching_contract = w3.eth.contract(
         address=w3.to_checksum_address(contract_data['address']),
         abi=contract_data['abi']
     )
 
-    # Get contract instance for the chain we'll call functions on
     action_w3 = connectTo('avax' if action_chain == 'source' else 'bsc')
     action_contract_data = getContractInfo(action_chain)
     action_contract = action_w3.eth.contract(
@@ -88,88 +85,37 @@ def scanBlocks(chain):
         abi=action_contract_data['abi']
     )
 
-    # Set up account for transactions
+    # Set up account
     private_key = '0x3077c2142570543b96c1d396cb50bff8602c207d3ea090ace8ad6da01c903927'
     account = action_w3.eth.account.from_key(private_key)
 
-    # Get current block number with retry logic
-    for attempt in range(max_retries):
-        try:
-            time.sleep(retry_delay)  # Wait before each attempt
-            current_block = w3.eth.block_number
-            from_block = max(current_block - 4,
-                             0)  # Last 5 blocks including current
-            break
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(
-                    f"Failed to get block number after {max_retries} attempts: {e}")
-                return
-            continue
+    try:
+        # Get block range with minimal RPC calls
+        current_block = w3.eth.block_number
+        from_block = current_block - block_range
 
-    if chain == 'source':
-        try:
-            time.sleep(retry_delay)
-            deposit_events = watching_contract.events.Deposit().get_logs(
-                fromBlock=from_block,
-                toBlock=current_block
-            )
-
-            for event in deposit_events:
-                try:
-                    time.sleep(retry_delay)  # Wait between transactions
-                    # Build transaction
-                    nonce = action_w3.eth.get_transaction_count(
-                        account.address)
-                    gas_price = action_w3.eth.gas_price
-
-                    tx = action_contract.functions.wrap(
-                        event['args']['token'],
-                        event['args']['recipient'],
-                        event['args']['amount']
-                    ).build_transaction({
-                        'from': account.address,
-                        'gas': 200000,
-                        'gasPrice': gas_price,
-                        'nonce': nonce,
-                    })
-
-                    # Sign and send transaction
-                    signed_tx = action_w3.eth.account.sign_transaction(tx,
-                                                                       private_key)
-                    tx_hash = action_w3.eth.send_raw_transaction(
-                        signed_tx.rawTransaction)
-                    receipt = action_w3.eth.wait_for_transaction_receipt(
-                        tx_hash)
-                    print(
-                        f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
-
-                except Exception as e:
-                    print(f"Failed to wrap tokens: {e}")
-
-        except Exception as e:
-            print(f"Failed to get Deposit events: {e}")
-
-    else:  # destination chain
-        for attempt in range(max_retries):
+        if chain == 'source':
+            # Handle Deposit events
             try:
-                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
-                unwrap_events = watching_contract.events.Unwrap().get_logs(
+                events = watching_contract.events.Deposit().get_logs(
                     fromBlock=from_block,
                     toBlock=current_block
                 )
 
-                for event in unwrap_events:
+                for event in events:
                     try:
-                        time.sleep(retry_delay)  # Wait between transactions
-                        # Cache frequently accessed values
+                        # Add delay between transactions
+                        time.sleep(2)
+
+                        # Get latest nonce and gas price
                         nonce = action_w3.eth.get_transaction_count(
                             account.address)
                         gas_price = action_w3.eth.gas_price
 
-                        tx = action_contract.functions.withdraw(
-                            event['args']['underlying_token'],
-                            event['args']['to'],
+                        # Build transaction
+                        tx = action_contract.functions.wrap(
+                            event['args']['token'],
+                            event['args']['recipient'],
                             event['args']['amount']
                         ).build_transaction({
                             'from': account.address,
@@ -178,7 +124,7 @@ def scanBlocks(chain):
                             'nonce': nonce,
                         })
 
-                        # Sign and send transaction
+                        # Sign and send
                         signed_tx = action_w3.eth.account.sign_transaction(tx,
                                                                            private_key)
                         tx_hash = action_w3.eth.send_raw_transaction(
@@ -186,18 +132,74 @@ def scanBlocks(chain):
                         receipt = action_w3.eth.wait_for_transaction_receipt(
                             tx_hash)
                         print(
-                            f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+                            f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
 
                     except Exception as e:
-                        print(f"Failed to withdraw tokens: {e}")
+                        print(f"Failed to wrap tokens: {e}")
                         continue
 
-                # If we got here without exception, break the retry loop
-                break
+            except Exception as e:
+                print(f"Failed to get Deposit events: {e}")
+
+        else:
+            # Handle Unwrap events with minimal RPC calls
+            try:
+                # Get single block for BSC to avoid rate limits
+                block = w3.eth.get_block(current_block, full_transactions=True)
+                time.sleep(2)  # Add delay after block fetch
+
+                # Filter transactions manually to reduce RPC calls
+                contract_address = watching_contract.address.lower()
+                for tx in block['transactions']:
+                    if tx['to'] and tx['to'].lower() == contract_address:
+                        try:
+                            # Process transaction if it's an Unwrap
+                            receipt = w3.eth.get_transaction_receipt(tx.hash)
+                            time.sleep(1)
+
+                            for log in receipt.logs:
+                                if log['address'].lower() == contract_address:
+                                    try:
+                                        # Decode the event
+                                        event = watching_contract.events.Unwrap().process_log(
+                                            log)
+
+                                        # Build withdraw transaction
+                                        nonce = action_w3.eth.get_transaction_count(
+                                            account.address)
+                                        tx = action_contract.functions.withdraw(
+                                            event['args']['underlying_token'],
+                                            event['args']['to'],
+                                            event['args']['amount']
+                                        ).build_transaction({
+                                            'from': account.address,
+                                            'gas': 200000,
+                                            'gasPrice': action_w3.eth.gas_price,
+                                            'nonce': nonce,
+                                        })
+
+                                        # Sign and send
+                                        signed_tx = action_w3.eth.account.sign_transaction(
+                                            tx, private_key)
+                                        tx_hash = action_w3.eth.send_raw_transaction(
+                                            signed_tx.rawTransaction)
+                                        receipt = action_w3.eth.wait_for_transaction_receipt(
+                                            tx_hash)
+                                        print(
+                                            f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+
+                                    except Exception as e:
+                                        print(
+                                            f"Failed to process Unwrap event: {e}")
+                                        continue
+
+                        except Exception as e:
+                            print(f"Failed to process transaction: {e}")
+                            continue
 
             except Exception as e:
-                if attempt == max_retries - 1:
-                    print(
-                        f"Failed to get Unwrap events after {max_retries} attempts: {e}")
-                    return
-                continue
+                print(f"Failed to get block data: {e}")
+
+    except Exception as e:
+        print(f"Failed to scan blocks: {e}")
+        
