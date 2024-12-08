@@ -64,11 +64,15 @@ def scanBlocks(chain):
         contract_data = getContractInfo('source')
         watching_chain = 'source'
         action_chain = 'destination'
+        retry_delay = 1  # shorter delay for AVAX
+        max_retries = 3
     else:
         w3 = connectTo('bsc')
         contract_data = getContractInfo('destination')
         watching_chain = 'destination'
         action_chain = 'source'
+        retry_delay = 3  # longer delay for BSC
+        max_retries = 5
 
     # Create contract instance for the chain we're watching
     watching_contract = w3.eth.contract(
@@ -89,11 +93,9 @@ def scanBlocks(chain):
     account = action_w3.eth.account.from_key(private_key)
 
     # Get current block number with retry logic
-    max_retries = 3
-    retry_delay = 1  # seconds
-
     for attempt in range(max_retries):
         try:
+            time.sleep(retry_delay)  # Wait before each attempt
             current_block = w3.eth.block_number
             from_block = max(current_block - 4,
                              0)  # Last 5 blocks including current
@@ -103,12 +105,11 @@ def scanBlocks(chain):
                 print(
                     f"Failed to get block number after {max_retries} attempts: {e}")
                 return
-            time.sleep(retry_delay)
             continue
 
     if chain == 'source':
-        # Watch for Deposit events on source chain
         try:
+            time.sleep(retry_delay)
             deposit_events = watching_contract.events.Deposit().get_logs(
                 fromBlock=from_block,
                 toBlock=current_block
@@ -116,9 +117,12 @@ def scanBlocks(chain):
 
             for event in deposit_events:
                 try:
+                    time.sleep(retry_delay)  # Wait between transactions
                     # Build transaction
                     nonce = action_w3.eth.get_transaction_count(
                         account.address)
+                    gas_price = action_w3.eth.gas_price
+
                     tx = action_contract.functions.wrap(
                         event['args']['token'],
                         event['args']['recipient'],
@@ -126,7 +130,7 @@ def scanBlocks(chain):
                     ).build_transaction({
                         'from': account.address,
                         'gas': 200000,
-                        'gasPrice': action_w3.eth.gas_price,
+                        'gasPrice': gas_price,
                         'nonce': nonce,
                     })
 
@@ -139,7 +143,6 @@ def scanBlocks(chain):
                         tx_hash)
                     print(
                         f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
-                    time.sleep(1)  # Add delay between transactions
 
                 except Exception as e:
                     print(f"Failed to wrap tokens: {e}")
@@ -148,9 +151,9 @@ def scanBlocks(chain):
             print(f"Failed to get Deposit events: {e}")
 
     else:  # destination chain
-        # Watch for Unwrap events on destination chain with retry logic
         for attempt in range(max_retries):
             try:
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
                 unwrap_events = watching_contract.events.Unwrap().get_logs(
                     fromBlock=from_block,
                     toBlock=current_block
@@ -158,9 +161,12 @@ def scanBlocks(chain):
 
                 for event in unwrap_events:
                     try:
-                        # Build transaction
+                        time.sleep(retry_delay)  # Wait between transactions
+                        # Cache frequently accessed values
                         nonce = action_w3.eth.get_transaction_count(
                             account.address)
+                        gas_price = action_w3.eth.gas_price
+
                         tx = action_contract.functions.withdraw(
                             event['args']['underlying_token'],
                             event['args']['to'],
@@ -168,7 +174,7 @@ def scanBlocks(chain):
                         ).build_transaction({
                             'from': account.address,
                             'gas': 200000,
-                            'gasPrice': action_w3.eth.gas_price,
+                            'gasPrice': gas_price,
                             'nonce': nonce,
                         })
 
@@ -181,17 +187,17 @@ def scanBlocks(chain):
                             tx_hash)
                         print(
                             f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
-                        time.sleep(1)  # Add delay between transactions
 
                     except Exception as e:
                         print(f"Failed to withdraw tokens: {e}")
+                        continue
 
-                break  # If successful, break the retry loop
+                # If we got here without exception, break the retry loop
+                break
 
             except Exception as e:
                 if attempt == max_retries - 1:
                     print(
                         f"Failed to get Unwrap events after {max_retries} attempts: {e}")
                     return
-                time.sleep(retry_delay)
                 continue
