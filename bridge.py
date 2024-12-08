@@ -121,21 +121,32 @@ def scanBlocks(chain):
             except Exception as e:
                 print(f"Failed to wrap tokens: {e}")
 
-    else:
-        # Modified destination chain logic
+    else:  # destination chain section
         current_block = w3.eth.block_number
         from_block = max(current_block - 4, 0)
 
-        # Get Unwrap events directly
+        print(f"\nScanning destination blocks {from_block} to {current_block}")
+
         unwrap_events = watching_contract.events.Unwrap().get_logs(
             fromBlock=from_block,
             toBlock=current_block
         )
 
+        print(f"Found {len(unwrap_events)} unwrap events")
+
         for event in unwrap_events:
             try:
+                print("\nUnwrap event detected:")
+                print(f"Underlying token: {event['args']['underlying_token']}")
+                print(f"Wrapped token: {event['args']['wrapped_token']}")
+                print(f"From: {event['args']['frm']}")
+                print(f"To: {event['args']['to']}")
+                print(f"Amount: {event['args']['amount']}")
+
                 time.sleep(1)
                 nonce = action_w3.eth.get_transaction_count(account.address)
+
+                print("\nBuilding withdraw transaction...")
 
                 tx = action_contract.functions.withdraw(
                     event['args']['underlying_token'],
@@ -148,13 +159,18 @@ def scanBlocks(chain):
                     'nonce': nonce,
                 })
 
+                print("Signing transaction...")
                 signed_tx = action_w3.eth.account.sign_transaction(tx,
                                                                    private_key)
+
+                print("Sending transaction...")
                 tx_hash = action_w3.eth.send_raw_transaction(
                     signed_tx.rawTransaction)
+
+                print(f"Waiting for receipt... Hash: {tx_hash.hex()}")
                 receipt = action_w3.eth.wait_for_transaction_receipt(tx_hash)
                 print(
                     f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
 
             except Exception as e:
-                print(f"Failed to withdraw tokens: {e}")
+                print(f"\nFailed to process unwrap event: {e}")
