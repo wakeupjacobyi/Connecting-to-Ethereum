@@ -85,23 +85,18 @@ def scanBlocks(chain):
     account = action_w3.eth.account.from_key(private_key)
 
     try:
-        # Get current block once to minimize RPC calls
         current_block = w3.eth.block_number
-        from_block = max(current_block - 2,
-                         0)  # Reduce block range to minimize load
-        print(
-            f"\nScanning {watching_chain} blocks {from_block} to {current_block}")
+        from_block = current_block - 1  # Just check the previous block
 
         if chain == 'source':
-            event_filter = watching_contract.events.Deposit().create_filter(
+            deposit_events = watching_contract.events.Deposit().get_logs(
                 fromBlock=from_block,
                 toBlock=current_block
             )
-            events = event_filter.get_all_entries()
 
-            for event in events:
+            for event in deposit_events:
                 try:
-                    time.sleep(2)  # Increased delay between transactions
+                    time.sleep(1)
                     nonce = action_w3.eth.get_transaction_count(
                         account.address)
 
@@ -129,65 +124,39 @@ def scanBlocks(chain):
                     print(f"Failed to wrap tokens: {e}")
 
         else:
-            # For destination chain, just check the latest block
-            latest_block = w3.eth.get_block(current_block,
-                                            full_transactions=True)
-            contract_address = watching_contract.address.lower()
+            unwrap_events = watching_contract.events.Unwrap().get_logs(
+                fromBlock=from_block,
+                toBlock=current_block
+            )
 
-            for tx in latest_block['transactions']:
-                # Only process transactions to our contract
-                if isinstance(tx, dict) and tx.get('to') and tx[
-                    'to'].lower() == contract_address:
-                    try:
-                        # Get transaction receipt to check for Unwrap event
-                        receipt = w3.eth.get_transaction_receipt(tx['hash'])
+            for event in unwrap_events:
+                try:
+                    time.sleep(1)
+                    nonce = action_w3.eth.get_transaction_count(
+                        account.address)
 
-                        # Process logs to find Unwrap events
-                        for log in receipt.get('logs', []):
-                            # Check if this log is from our contract
-                            if log['address'].lower() == contract_address:
-                                try:
-                                    # Decode the log
-                                    event = watching_contract.events.Unwrap().process_log(
-                                        log)
+                    withdraw_tx = action_contract.functions.withdraw(
+                        event['args']['underlying_token'],
+                        event['args']['to'],
+                        event['args']['amount']
+                    ).build_transaction({
+                        'from': account.address,
+                        'gas': 200000,
+                        'gasPrice': action_w3.eth.gas_price,
+                        'nonce': nonce,
+                    })
 
-                                    print(
-                                        f"\nProcessing Unwrap event from tx: {tx['hash'].hex()}")
-                                    print(
-                                        f"Underlying token: {event['args']['underlying_token']}")
-                                    print(f"To: {event['args']['to']}")
-                                    print(f"Amount: {event['args']['amount']}")
+                    signed_tx = action_w3.eth.account.sign_transaction(
+                        withdraw_tx, private_key)
+                    tx_hash = action_w3.eth.send_raw_transaction(
+                        signed_tx.rawTransaction)
+                    receipt = action_w3.eth.wait_for_transaction_receipt(
+                        tx_hash)
+                    print(
+                        f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
 
-                                    time.sleep(2)  # Increased delay
-                                    nonce = action_w3.eth.get_transaction_count(
-                                        account.address)
-
-                                    withdraw_tx = action_contract.functions.withdraw(
-                                        event['args']['underlying_token'],
-                                        event['args']['to'],
-                                        event['args']['amount']
-                                    ).build_transaction({
-                                        'from': account.address,
-                                        'gas': 200000,
-                                        'gasPrice': action_w3.eth.gas_price,
-                                        'nonce': nonce,
-                                    })
-
-                                    signed_tx = action_w3.eth.account.sign_transaction(
-                                        withdraw_tx, private_key)
-                                    tx_hash = action_w3.eth.send_raw_transaction(
-                                        signed_tx.rawTransaction)
-                                    action_w3.eth.wait_for_transaction_receipt(
-                                        tx_hash)
-                                    print(
-                                        f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
-
-                                except Exception as e:
-                                    print(
-                                        f"Failed to process Unwrap event: {e}")
-
-                    except Exception as e:
-                        print(f"Failed to process transaction: {e}")
+                except Exception as e:
+                    print(f"Failed to process unwrap: {e}")
 
     except Exception as e:
         print(f"Error running scanBlocks('{chain}')")
