@@ -146,89 +146,98 @@ def scanBlocks(chain):
     else:  # destination chain (BSC)
         try:
             current_block = w3.eth.block_number
-            print(f"Scanning block {current_block} on {chain} chain")
+            # Scan current block and previous block to ensure we catch the event
+            blocks_to_scan = [current_block - 1, current_block]
 
-            # Get full block with transactions
-            block = w3.eth.get_block(current_block, full_transactions=True)
-            print(
-                f"Retrieved block with {len(block['transactions'])} transactions")
+            print(f"Scanning blocks {blocks_to_scan} on {chain} chain")
 
-            contract_address = watching_contract.address.lower()
-            print(f"Looking for transactions to contract: {contract_address}")
-
-            found_unwrap = False
-            for tx in block['transactions']:
-                print(
-                    f"\nChecking transaction: {tx.hash.hex() if hasattr(tx, 'hash') else tx['hash']}")
-
-                tx_to = tx.get('to', '').lower() if isinstance(tx,
-                                                               dict) else getattr(
-                    tx, 'to', '').lower()
-                if tx_to == contract_address:
-                    print("Found transaction to our contract")
-
-                    # Get transaction receipt
-                    receipt = w3.eth.get_transaction_receipt(
-                        tx.hash if hasattr(tx, 'hash') else tx['hash'])
+            for block_number in blocks_to_scan:
+                print(f"\nProcessing block {block_number}")
+                try:
+                    # Get full block with transactions
+                    block = w3.eth.get_block(block_number,
+                                             full_transactions=True)
                     print(
-                        f"Transaction receipt has {len(receipt['logs'])} logs")
+                        f"Retrieved block with {len(block['transactions'])} transactions")
 
-                    # Process logs in the receipt
-                    for log in receipt.get('logs', []):
-                        print(
-                            f"Processing log from address: {log['address'].lower()}")
+                    contract_address = watching_contract.address.lower()
+                    print(
+                        f"Looking for transactions to contract: {contract_address}")
 
-                        if log['address'].lower() == contract_address:
-                            try:
-                                # Try to decode the log as an Unwrap event
-                                event = watching_contract.events.Unwrap().process_log(
-                                    log)
-                                found_unwrap = True
+                    for tx in block['transactions']:
+                        tx_hash = tx.hash if hasattr(tx, 'hash') else tx[
+                            'hash']
+                        print(f"\nChecking transaction: {tx_hash.hex()}")
 
-                                print("\n=== Found Unwrap Event ===")
-                                print(
-                                    f"Underlying token: {event['args']['underlying_token']}")
-                                print(f"To: {event['args']['to']}")
-                                print(f"Amount: {event['args']['amount']}")
+                        # Get transaction receipt directly
+                        try:
+                            receipt = w3.eth.get_transaction_receipt(tx_hash)
+                            if receipt['to'] and receipt[
+                                'to'].lower() == contract_address:
+                                print("Found transaction to our contract")
 
-                                # Build withdraw transaction
-                                nonce = action_w3.eth.get_transaction_count(
-                                    account.address)
-                                withdraw_tx = action_contract.functions.withdraw(
-                                    event['args']['underlying_token'],
-                                    event['args']['to'],
-                                    event['args']['amount']
-                                ).build_transaction({
-                                    'from': account.address,
-                                    'gas': 200000,
-                                    'gasPrice': action_w3.eth.gas_price,
-                                    'nonce': nonce,
-                                })
+                                # Check logs for Unwrap event
+                                for log in receipt.logs:
+                                    if log[
+                                        'address'].lower() == contract_address:
+                                        try:
+                                            event = watching_contract.events.Unwrap().process_log(
+                                                log)
+                                            print(
+                                                "\n=== Found Unwrap Event ===")
+                                            print(
+                                                f"Underlying token: {event['args']['underlying_token']}")
+                                            print(f"To: {event['args']['to']}")
+                                            print(
+                                                f"Amount: {event['args']['amount']}")
 
-                                print("Built withdraw transaction")
+                                            # Build withdraw transaction
+                                            nonce = action_w3.eth.get_transaction_count(
+                                                account.address)
+                                            withdraw_tx = action_contract.functions.withdraw(
+                                                event['args'][
+                                                    'underlying_token'],
+                                                event['args']['to'],
+                                                event['args']['amount']
+                                            ).build_transaction({
+                                                'from': account.address,
+                                                'gas': 200000,
+                                                'gasPrice': action_w3.eth.gas_price,
+                                                'nonce': nonce,
+                                            })
 
-                                # Sign and send transaction
-                                signed_tx = action_w3.eth.account.sign_transaction(
-                                    withdraw_tx, private_key)
-                                tx_hash = action_w3.eth.send_raw_transaction(
-                                    signed_tx.rawTransaction)
-                                print(
-                                    f"Sent withdraw transaction: {tx_hash.hex()}")
+                                            print("Built withdraw transaction")
 
-                                receipt = action_w3.eth.wait_for_transaction_receipt(
-                                    tx_hash)
-                                print(
-                                    f"Withdraw transaction confirmed in block {receipt['blockNumber']}")
-                                print(
-                                    f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+                                            # Sign and send transaction
+                                            signed_tx = action_w3.eth.account.sign_transaction(
+                                                withdraw_tx, private_key)
+                                            withdraw_hash = action_w3.eth.send_raw_transaction(
+                                                signed_tx.rawTransaction)
+                                            print(
+                                                f"Sent withdraw transaction: {withdraw_hash.hex()}")
 
-                            except Exception as e:
-                                print(
-                                    f"Failed to process potential Unwrap event: {e}")
-                                continue
+                                            receipt = action_w3.eth.wait_for_transaction_receipt(
+                                                withdraw_hash)
+                                            print(
+                                                f"Withdraw transaction confirmed in block {receipt['blockNumber']}")
+                                            print(
+                                                f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+                                            return  # Exit after processing the Unwrap event
 
-            if not found_unwrap:
-                print("No Unwrap events found in this block")
+                                        except Exception as e:
+                                            print(
+                                                f"Error processing log as Unwrap event: {e}")
+                                            continue
+                        except Exception as e:
+                            print(
+                                f"Error getting receipt for transaction {tx_hash.hex()}: {e}")
+                            continue
+
+                except Exception as e:
+                    print(f"Error processing block {block_number}: {e}")
+                    continue
+
+            print("No Unwrap events found in scanned blocks")
 
         except Exception as e:
-            print(f"Failed to process block: {e}")
+            print(f"Failed to process blocks: {e}")
