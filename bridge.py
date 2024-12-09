@@ -52,25 +52,31 @@ def scanBlocks(chain):
         When Unwrap events are found on the destination chain, call the 'withdraw' function on the source chain
     """
 
+    import time
+
     if chain not in ['source', 'destination']:
         print(f"Invalid chain: {chain}")
         return
 
-    # Setup chains and contracts
+    # Connect to appropriate chains and get contract info
     if chain == 'source':
         w3 = connectTo('avax')
         contract_data = getContractInfo('source')
+        watching_chain = 'source'
         action_chain = 'destination'
     else:
         w3 = connectTo('bsc')
         contract_data = getContractInfo('destination')
+        watching_chain = 'destination'
         action_chain = 'source'
 
+    # Create contract instance for the chain we're watching
     watching_contract = w3.eth.contract(
         address=w3.to_checksum_address(contract_data['address']),
         abi=contract_data['abi']
     )
 
+    # Get contract instance for the chain we'll call functions on
     action_w3 = connectTo('avax' if action_chain == 'source' else 'bsc')
     action_contract_data = getContractInfo(action_chain)
     action_contract = action_w3.eth.contract(
@@ -78,92 +84,109 @@ def scanBlocks(chain):
         abi=action_contract_data['abi']
     )
 
+    # Set up account for transactions
     private_key = '0x3077c2142570543b96c1d396cb50bff8602c207d3ea090ace8ad6da01c903927'
     account = action_w3.eth.account.from_key(private_key)
 
-    try:
-        current_block = w3.eth.block_number
-        print(f"Processing block {current_block}")
+    if chain == 'source':
+        # For AVAX, we can use normal event scanning
+        try:
+            current_block = w3.eth.block_number
+            from_block = max(current_block - 4, 0)
 
-        if chain == 'source':
-            # Handle Deposit event
+            deposit_events = watching_contract.events.Deposit().get_logs(
+                fromBlock=from_block,
+                toBlock=current_block
+            )
+
+            for event in deposit_events:
+                try:
+                    time.sleep(1)  # Small delay between transactions
+                    nonce = action_w3.eth.get_transaction_count(
+                        account.address)
+
+                    tx = action_contract.functions.wrap(
+                        event['args']['token'],
+                        event['args']['recipient'],
+                        event['args']['amount']
+                    ).build_transaction({
+                        'from': account.address,
+                        'gas': 200000,
+                        'gasPrice': action_w3.eth.gas_price,
+                        'nonce': nonce,
+                    })
+
+                    signed_tx = action_w3.eth.account.sign_transaction(tx,
+                                                                       private_key)
+                    tx_hash = action_w3.eth.send_raw_transaction(
+                        signed_tx.rawTransaction)
+                    receipt = action_w3.eth.wait_for_transaction_receipt(
+                        tx_hash)
+                    print(
+                        f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
+
+                except Exception as e:
+                    print(f"Failed to wrap tokens: {e}")
+
+        except Exception as e:
+            print(f"Failed to process source chain: {e}")
+
+    else:
+        # For BSC, use direct block inspection
+        try:
+            current_block = w3.eth.block_number
+            contract_address = watching_contract.address.lower()
+
+            # Get just the latest block to minimize RPC calls
             block = w3.eth.get_block(current_block, full_transactions=True)
+            time.sleep(2)  # Add delay after heavy RPC call
+
             for tx in block['transactions']:
                 if isinstance(tx, dict) and tx.get('to') and tx[
-                    'to'].lower() == watching_contract.address.lower():
-                    receipt = w3.eth.get_transaction_receipt(tx['hash'])
-
-                    for log in receipt['logs']:
-                        if log[
-                            'address'].lower() == watching_contract.address.lower():
-                            try:
-                                event = watching_contract.events.Deposit().process_log(
-                                    log)
-                                if event:
-                                    # Call wrap on destination chain
-                                    nonce = action_w3.eth.get_transaction_count(
-                                        account.address)
-                                    wrap_tx = action_contract.functions.wrap(
-                                        event['args']['token'],
-                                        event['args']['recipient'],
-                                        event['args']['amount']
-                                    ).build_transaction({
-                                        'from': account.address,
-                                        'gas': 200000,
-                                        'gasPrice': action_w3.eth.gas_price,
-                                        'nonce': nonce,
-                                    })
-
-                                    signed_tx = action_w3.eth.account.sign_transaction(
-                                        wrap_tx, private_key)
-                                    tx_hash = action_w3.eth.send_raw_transaction(
-                                        signed_tx.rawTransaction)
-                                    receipt = action_w3.eth.wait_for_transaction_receipt(
-                                        tx_hash)
-                                    print(
-                                        f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
-                            except Exception as e:
-                                print(f"Error processing deposit: {e}")
-
-        else:
-            # Handle Unwrap event
-            latest_tx_hash = w3.eth.get_block(current_block)['transactions'][
-                -1]
-            receipt = w3.eth.get_transaction_receipt(latest_tx_hash)
-
-            if receipt['to'] and receipt[
-                'to'].lower() == watching_contract.address.lower():
-                for log in receipt['logs']:
-                    if log[
-                        'address'].lower() == watching_contract.address.lower():
+                    'to'].lower() == contract_address:
+                    # Check if this is an unwrap call
+                    func, args = decode_input_data(watching_contract,
+                                                   tx.get('input', ''))
+                    if func and func.fn_name == 'unwrap':
                         try:
-                            event = watching_contract.events.Unwrap().process_log(
-                                log)
-                            if event:
-                                # Call withdraw on source chain
-                                nonce = action_w3.eth.get_transaction_count(
-                                    account.address)
-                                withdraw_tx = action_contract.functions.withdraw(
-                                    event['args']['underlying_token'],
-                                    event['args']['to'],
-                                    event['args']['amount']
-                                ).build_transaction({
-                                    'from': account.address,
-                                    'gas': 200000,
-                                    'gasPrice': action_w3.eth.gas_price,
-                                    'nonce': nonce,
-                                })
+                            time.sleep(1)
+                            receipt = w3.eth.get_transaction_receipt(
+                                tx['hash'])
 
-                                signed_tx = action_w3.eth.account.sign_transaction(
-                                    withdraw_tx, private_key)
-                                tx_hash = action_w3.eth.send_raw_transaction(
-                                    signed_tx.rawTransaction)
-                                receipt = action_w3.eth.wait_for_transaction_receipt(
-                                    tx_hash)
-                                print(
-                                    f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+                            # Build withdraw transaction
+                            nonce = action_w3.eth.get_transaction_count(
+                                account.address)
+                            withdraw_tx = action_contract.functions.withdraw(
+                                args['underlying_token'],
+                                args['to'],
+                                args['amount']
+                            ).build_transaction({
+                                'from': account.address,
+                                'gas': 200000,
+                                'gasPrice': action_w3.eth.gas_price,
+                                'nonce': nonce,
+                            })
+
+                            signed_tx = action_w3.eth.account.sign_transaction(
+                                withdraw_tx, private_key)
+                            tx_hash = action_w3.eth.send_raw_transaction(
+                                signed_tx.rawTransaction)
+                            receipt = action_w3.eth.wait_for_transaction_receipt(
+                                tx_hash)
+                            print(
+                                f"Withdrew {args['amount']} tokens for {args['to']}")
+
                         except Exception as e:
-                            print(f"Error processing unwrap: {e}")
+                            print(f"Failed to process unwrap: {e}")
+                            continue
 
-    except Exception as e:
-        print(f"Error in scanBlocks: {e}")
+        except Exception as e:
+            print(f"Failed to process destination chain: {e}")
+            
+
+def decode_input_data(contract, input_data):
+    """Helper function to decode transaction input data"""
+    try:
+        return contract.decode_function_input(input_data)
+    except:
+        return None, None
