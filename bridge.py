@@ -30,6 +30,28 @@ def getContractInfo(chain):
         Load the contract_info file into a dictinary
         This function is used by the autograder and will likely be useful to you
     """
+    p = Path(__file__).with_name(contract_info)
+    try:
+        with p.open('r') as f:
+            contracts = json.load(f)
+    except Exception as e:
+        print("Failed to read contract info")
+        print("Please contact your instructor")
+        print(e)
+        sys.exit(1)
+
+    return contracts[chain]
+
+
+def scanBlocks(chain):
+    """
+        chain - (string) should be either "source" or "destination"
+        Scan the last 5 blocks of the source and destination chains
+        Look for 'Deposit' events on the source chain and 'Unwrap' events on the destination chain
+        When Deposit events are found on the source chain, call the 'wrap' function the destination chain
+        When Unwrap events are found on the destination chain, call the 'withdraw' function on the source chain
+    """
+
     if chain not in ['source', 'destination']:
         print(f"Invalid chain: {chain}")
         return
@@ -153,4 +175,3 @@ def getContractInfo(chain):
     except Exception as e:
         print(f"Error running scanBlocks('{chain}')")
         print(str(e))
-        
