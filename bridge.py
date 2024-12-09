@@ -58,6 +58,8 @@ def scanBlocks(chain):
         print(f"Invalid chain: {chain}")
         return
 
+    print(f"\n=== Starting scan for {chain} chain ===")
+
     # Connect to appropriate chains and get contract info
     if chain == 'source':
         w3 = connectTo('avax')
@@ -69,6 +71,9 @@ def scanBlocks(chain):
         contract_data = getContractInfo('destination')
         watching_chain = 'destination'
         action_chain = 'source'
+
+    print(f"Connected to {chain} chain")
+    print(f"Contract address: {contract_data['address']}")
 
     # Create contract instances
     watching_contract = w3.eth.contract(
@@ -86,12 +91,11 @@ def scanBlocks(chain):
     # Set up account
     private_key = '0x3077c2142570543b96c1d396cb50bff8602c207d3ea090ace8ad6da01c903927'
     account = action_w3.eth.account.from_key(private_key)
+    print(f"Using account: {account.address}")
 
     if chain == 'source':
-        # Regular processing for AVAX chain
         current_block = w3.eth.block_number
         from_block = current_block - 4
-
         print(
             f"Scanning blocks {from_block} to {current_block} on {chain} chain")
 
@@ -100,11 +104,14 @@ def scanBlocks(chain):
                 fromBlock=from_block,
                 toBlock=current_block
             )
+            print(f"Found {len(deposit_events)} Deposit events")
 
             for event in deposit_events:
                 try:
                     nonce = action_w3.eth.get_transaction_count(
                         account.address)
+                    print(
+                        f"Processing Deposit: Amount={event['args']['amount']}, Recipient={event['args']['recipient']}")
 
                     tx = action_contract.functions.wrap(
                         event['args']['token'],
@@ -121,10 +128,15 @@ def scanBlocks(chain):
                                                                        private_key)
                     tx_hash = action_w3.eth.send_raw_transaction(
                         signed_tx.rawTransaction)
+                    print(f"Sent wrap transaction: {tx_hash.hex()}")
+
                     receipt = action_w3.eth.wait_for_transaction_receipt(
                         tx_hash)
                     print(
+                        f"Wrap transaction confirmed in block {receipt['blockNumber']}")
+                    print(
                         f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
+
                 except Exception as e:
                     print(f"Failed to wrap tokens: {e}")
 
@@ -133,43 +145,51 @@ def scanBlocks(chain):
 
     else:  # destination chain (BSC)
         try:
-            # Get current block
             current_block = w3.eth.block_number
-            time.sleep(1)  # Rate limit delay
-
-            # Only process the current block
             print(f"Scanning block {current_block} on {chain} chain")
 
             # Get full block with transactions
             block = w3.eth.get_block(current_block, full_transactions=True)
-            time.sleep(1)  # Rate limit delay
+            print(
+                f"Retrieved block with {len(block['transactions'])} transactions")
 
             contract_address = watching_contract.address.lower()
+            print(f"Looking for transactions to contract: {contract_address}")
 
-            # Process transactions in the block
+            found_unwrap = False
             for tx in block['transactions']:
-                if isinstance(tx, dict) and tx.get('to',
-                                                   '').lower() == contract_address:
+                print(
+                    f"\nChecking transaction: {tx.hash.hex() if hasattr(tx, 'hash') else tx['hash']}")
+
+                tx_to = tx.get('to', '').lower() if isinstance(tx,
+                                                               dict) else getattr(
+                    tx, 'to', '').lower()
+                if tx_to == contract_address:
+                    print("Found transaction to our contract")
+
                     # Get transaction receipt
-                    time.sleep(1)  # Rate limit delay
-                    receipt = w3.eth.get_transaction_receipt(tx['hash'])
+                    receipt = w3.eth.get_transaction_receipt(
+                        tx.hash if hasattr(tx, 'hash') else tx['hash'])
+                    print(
+                        f"Transaction receipt has {len(receipt['logs'])} logs")
 
                     # Process logs in the receipt
                     for log in receipt.get('logs', []):
+                        print(
+                            f"Processing log from address: {log['address'].lower()}")
+
                         if log['address'].lower() == contract_address:
                             try:
                                 # Try to decode the log as an Unwrap event
                                 event = watching_contract.events.Unwrap().process_log(
                                     log)
+                                found_unwrap = True
 
-                                print(
-                                    f"Found Unwrap event in block {current_block}")
+                                print("\n=== Found Unwrap Event ===")
                                 print(
                                     f"Underlying token: {event['args']['underlying_token']}")
                                 print(f"To: {event['args']['to']}")
                                 print(f"Amount: {event['args']['amount']}")
-
-                                time.sleep(1)  # Rate limit delay
 
                                 # Build withdraw transaction
                                 nonce = action_w3.eth.get_transaction_count(
@@ -185,13 +205,20 @@ def scanBlocks(chain):
                                     'nonce': nonce,
                                 })
 
+                                print("Built withdraw transaction")
+
                                 # Sign and send transaction
                                 signed_tx = action_w3.eth.account.sign_transaction(
                                     withdraw_tx, private_key)
                                 tx_hash = action_w3.eth.send_raw_transaction(
                                     signed_tx.rawTransaction)
+                                print(
+                                    f"Sent withdraw transaction: {tx_hash.hex()}")
+
                                 receipt = action_w3.eth.wait_for_transaction_receipt(
                                     tx_hash)
+                                print(
+                                    f"Withdraw transaction confirmed in block {receipt['blockNumber']}")
                                 print(
                                     f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
 
@@ -199,6 +226,9 @@ def scanBlocks(chain):
                                 print(
                                     f"Failed to process potential Unwrap event: {e}")
                                 continue
+
+            if not found_unwrap:
+                print("No Unwrap events found in this block")
 
         except Exception as e:
             print(f"Failed to process block: {e}")
