@@ -164,4 +164,6 @@ def scanBlocks(chain):
                                 print(f"Failed to process log: {e}")
             except Exception as e:
                 print(f"Error in destination chain processing: {e}")
-                
+    except Exception as e:
+        print(f"Error running scanBlocks('{chain}')")
+        print(str(e))
