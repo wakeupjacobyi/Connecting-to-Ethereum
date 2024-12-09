@@ -85,10 +85,11 @@ def scanBlocks(chain):
     account = action_w3.eth.account.from_key(private_key)
 
     try:
-        if chain == 'source':
-            current_block = w3.eth.block_number
-            from_block = current_block - 1
+        current_block = w3.eth.block_number
+        from_block = current_block - 1
 
+        if chain == 'source':
+            # Handle source chain events (Deposit)
             deposit_events = watching_contract.events.Deposit().get_logs(
                 fromBlock=from_block,
                 toBlock=current_block
@@ -96,8 +97,7 @@ def scanBlocks(chain):
 
             for event in deposit_events:
                 try:
-                    nonce = action_w3.eth.get_transaction_count(
-                        account.address)
+                    nonce = action_w3.eth.get_transaction_count(account.address)
                     tx = action_contract.functions.wrap(
                         event['args']['token'],
                         event['args']['recipient'],
@@ -109,62 +109,44 @@ def scanBlocks(chain):
                         'nonce': nonce,
                     })
 
-                    signed_tx = action_w3.eth.account.sign_transaction(tx,
-                                                                       private_key)
-                    tx_hash = action_w3.eth.send_raw_transaction(
-                        signed_tx.rawTransaction)
-                    receipt = action_w3.eth.wait_for_transaction_receipt(
-                        tx_hash)
-                    print(
-                        f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
+                    signed_tx = action_w3.eth.account.sign_transaction(tx, private_key)
+                    tx_hash = action_w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+                    receipt = action_w3.eth.wait_for_transaction_receipt(tx_hash)
+                    print(f"Wrapped {event['args']['amount']} tokens for {event['args']['recipient']}")
 
                 except Exception as e:
                     print(f"Failed to wrap tokens: {e}")
 
         else:
-            # Get just the latest block number and its transactions
-            block = w3.eth.get_block('latest')
-            if block and block.get('transactions'):
-                for tx_hash in block['transactions'][
-                               -1:]:  # Only check the last transaction
-                    try:
-                        receipt = w3.eth.get_transaction_receipt(tx_hash)
-                        contract_address = watching_contract.address.lower()
+            # Handle destination chain events (Unwrap)
+            # Look specifically at the current block for unwrap events
+            unwrap_events = watching_contract.events.Unwrap().get_logs(
+                fromBlock=current_block,
+                toBlock=current_block
+            )
 
-                        if receipt and receipt.get('to',
-                                                   '').lower() == contract_address:
-                            for log in receipt.get('logs', []):
-                                if log['address'].lower() == contract_address:
-                                    try:
-                                        event = watching_contract.events.Unwrap().process_log(
-                                            log)
-                                        if event:
-                                            nonce = action_w3.eth.get_transaction_count(
-                                                account.address)
-                                            withdraw_tx = action_contract.functions.withdraw(
-                                                event['args'][
-                                                    'underlying_token'],
-                                                event['args']['to'],
-                                                event['args']['amount']
-                                            ).build_transaction({
-                                                'from': account.address,
-                                                'gas': 200000,
-                                                'gasPrice': action_w3.eth.gas_price,
-                                                'nonce': nonce,
-                                            })
+            for event in unwrap_events:
+                try:
+                    nonce = action_w3.eth.get_transaction_count(account.address)
+                    # Call withdraw on source chain
+                    withdraw_tx = action_contract.functions.withdraw(
+                        event['args']['underlying_token'],
+                        event['args']['to'],
+                        event['args']['amount']
+                    ).build_transaction({
+                        'from': account.address,
+                        'gas': 200000,
+                        'gasPrice': action_w3.eth.gas_price,
+                        'nonce': nonce,
+                    })
 
-                                            signed_tx = action_w3.eth.account.sign_transaction(
-                                                withdraw_tx, private_key)
-                                            tx_hash = action_w3.eth.send_raw_transaction(
-                                                signed_tx.rawTransaction)
-                                            action_w3.eth.wait_for_transaction_receipt(
-                                                tx_hash)
-                                            print(
-                                                f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
-                                    except Exception as e:
-                                        print(f"Failed to process log: {e}")
-                    except Exception as e:
-                        print(f"Failed to process transaction: {e}")
+                    signed_tx = action_w3.eth.account.sign_transaction(withdraw_tx, private_key)
+                    tx_hash = action_w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+                    receipt = action_w3.eth.wait_for_transaction_receipt(tx_hash)
+                    print(f"Withdrew {event['args']['amount']} tokens for {event['args']['to']}")
+
+                except Exception as e:
+                    print(f"Failed to withdraw tokens: {e}")
 
     except Exception as e:
         print(f"Error running scanBlocks('{chain}')")
